@@ -2793,3 +2793,134 @@ The PD1:PD-L1 immune checkpoint is a crucial target for immunotherapies. However
 In their study, they also generated scRNA-seq data of virus-specific CD4+ T cells isolated from mice chronically infected with LMCV (33 days p.il), after treatment with an anti-PD-L1 antibody or with an isotype antibody (control). We will apply ProjecTME re-analyse these samples in the context of a reference atlas of CD4+ T cells in viral infection. This atlas was described by [Andreatta et al.(2022) eLife](https://doi.org/10.7554/eLife.76339).
 
 ##### scRNA-seq preprocessing and QC
+
+We can download the single-cell data for this study directly from Gene Expression Omnibus (GEO): [GSE163345](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE163345).
+
+```r
+iso <- Read10X('Vignettes/data/Snell/CD4_ISO/')
+pdl <- Read10X('Vignettes/data/Snell/CD4_PDL/')
+# Create Seurat object
+# unique barcodes
+colnames(iso) <- paste('Sne1',colnames(iso),sep = '_')
+colnames(pdl) <- paste('Sne2', colnames(pdl), sep = '_')
+data_iso <- CreateSeuratObject(counts = iso, assay = 'RNA')
+data_iso$Condition <- 'isotype'
+data_pdl <- CreateSeuratObject(counts = pdl, assay = 'RNA')
+data_pdl$Condition <- 'PDL1_treated'
+# Merge in single object
+seu <- merge(data_iso, data_pdl)
+# Basic quality control
+seu <- NormalizeData(seu)
+seu <- AddMetaData(seu,metadata = PercentageFeatureSet(seu,pattern = '^Rp'),col.name = 'percent.ribo')
+seu <- AddMetaData(seu,PercentageFeatureSet(seu,pattern = '^mt-'),col.name = 'percent.mito')
+Idents(seu) <- 'Condition'
+VlnPlot(seu,features = c('nFeature_RNA','nCount_RNA','percent.ribo','percent.mito'),ncol = 2,pt.size = 0.01)
+```
+
+![](./Vignettes/plots/ProjecTME.plot.54.png)
+
+```r
+cutoffs <- list()
+cutoffs[['percent.ribo']] <- c(min = 0, max = 50)
+cutoffs[['percent.mito']] <- c(min = 0, max = 6)
+cutoffs[['nFeature_RNA']] <- c(min = 500, max = 3000)
+cutoffs[['nCount_RNA']] <- c(min = 1000, max = 10000)
+seu <- subset(seu, subset = nFeature_RNA > cutoffs[['nFeature_RNA']]['min'] &
+                nFeature_RNA < cutoffs[['nFeature_RNA']]['max'] &
+                nCount_RNA > cutoffs[['nCount_RNA']]['min'] & nCount_RNA < cutoffs[['nCount_RNA']]['max'] &
+                percent.mito > cutoffs[['percent.mito']]['min'] & percent.mito < cutoffs[['percent.mito']]['max'] &
+                percent.ribo > cutoffs[['percent.ribo']]['min'] & percent.ribo < cutoffs[['percent.ribo']]['max'])
+# Calculate low dimensional embeddings for the two samples
+sample.list <- SplitObject(seu, split.by = 'Condition')
+sample.list <- lapply(sample.list, function(x){
+  ScaleData(x) %>% FindVariableFeatures(nfeatures = 500) %>% RunPCA(npcs = 15) %>% RunUMAP(dims=1:15)
+})
+DimPlot(sample.list$isotype,group.by = 'Condition') | DimPlot(sample.list$PDL1_treated,group.by = 'Condition')
+```
+
+![](./Vignettes/plots/ProjecTME.plot.55.png)
+
+##### Load Reference map
+
+```r
+ref <- load.reference.map('referenceLCMVCD4')
+palette <- ref@misc$atlas.palette
+DimPlot(ref, cols = palette) + theme(aspect.ratio = 1)
+```
+
+![](./Vignettes/plots/ProjecTME.plot.43.png)
+
+##### Run ProjecTME
+
+The `ProjecTME.classifier` function integrates the query with the reference and transfers cell type labels from reference to query. The original low-dimensional spaces of the query are not modified.
+
+```r
+sample.class <- list()
+sample.class$isotype <- ProjecTME.classifier(query = sample.list$isotype, ref = ref, filter.cells = F)
+sample.class$PDL1_treated <- ProjecTME.classifier(query = sample.list$PDL1_treated,ref = ref,filter.cells = F)
+a <- DimPlot(sample.class$isotype,group.by = 'functional.cluster',cols = palette) + theme(aspect.ratio = 1) + ggtitle('Isotype')
+b <- DimPlot(sample.class$PDL1_treated,group.by = 'functional.cluster',cols = palette) + theme(aspect.ratio = 1) + ggtitle('PDL1-treated')
+a | b
+```
+
+![](./Vignettes/plots/ProjecTME.plot.56.png)
+
+We can compare the subtype composition between anti-PD-L1 treated and isotype-treated CD4+ T cells. We see a nearly three-fold increase in Th1 subtypes upon anti-PD-L1 blockade compared to control.
+
+```r
+a <- plot.statepred.composition(ref = ref,query = sample.class$isotype,metric = 'Percent') + ggtitle('Isotype') + ylim(0,40)
+b <- plot.statepred.composition(ref = ref,query = sample.class$PDL1_treated,metric = 'Percent') + ggtitle('PDL1_treated') + ylim(0,40)
+a | b
+```
+
+![](./Vignettes/plots/ProjecTME.plot.57.png)
+
+##### ProjecTME reference embedding
+
+The `Run.ProjecTME` function integrates the query with the reference, transfers cell type labels from reference to query, and embeds the cells from the query in the same low-dimensional embeddings (PCA and UMAP) of the reference.
+
+This allows comparing different conditions in the same system of coordinates.
+
+```r
+obj.projected <- Run.ProjecTME(query = sample.list, ref = ref, filter.cells = F)
+a <- plot.projection(ref = ref,query = obj.projected$isotype,linesize = 0.5) + theme(aspect.ratio = 1) + ggtitle('Isotype')
+b <- plot.projection(ref = ref,query = obj.projected$PDL1_treated,linesize = 0.5) + theme(aspect.ratio = 1) + ggtitle('PDL1-treated')
+a | b
+```
+
+![](./Vignettes/plots/ProjecTME.plot.58.png)
+
+As in the classifier mode, we can examine subtype composition.
+
+```r
+a <- plot.statepred.composition(ref = ref,query = obj.projected$isotype,metric = 'Percent') + ggtitle('Isotype') + ylim(0,40)
+b <- plot.statepred.composition(ref = ref,query = obj.projected$PDL1_treated,metric = 'Percent') + ggtitle('PDL1-treated') + ylim(0,40)
+a | b
+```
+
+![](./Vignettes/plots/ProjecTME.plot.59.png)
+
+Expression profiles for a panel of marker genes shows good agreement of the projected data with the reference.
+
+```r
+genes4radar <- c('Cxcr6','Gzmb','Ccl5','Nkg7','Ly6c2','Cxcr5','Tox','Izumo1r','Tnfsf8','Il7r','Tcf7','Eomes',
+                 'Gzmk','Crtam','Ifit1','Foxp3','Ikzf2','Il2ra')
+plot.states.radar(ref = ref,query = obj.projected,genes4radar = genes4radar,min.cells = 20)
+```
+
+![](./Vignettes/plots/ProjecTME.plot.60.png)
+
+Are there any differences between the control Th1 cells and the anti-PD-L1 treated Th1 cells?
+
+```r
+deg <- find.discriminant.genes(ref = ref,query = obj.projected$PDL1_treated,query.control = obj.projected$isotype,state = 'Th1_Effector')
+EnhancedVolcano::EnhancedVolcano(
+  deg, lab = rownames(deg), x = 'avg_log2FC', y = 'p_val', pCutoff = 0.01,
+  FCcutoff = 0.2,labSize = 5,legendPosition = 'none',drawConnectors = F,
+  title = 'Anti-PD-L1 vs. Isotype (Th1_Effector)'
+)
+```
+
+![](./Vignettes/plots/ProjecTME.plot.61.png)
+
+We observed that Th1 effector cells after anti-PD-L1 treatment upregulated a Th1-associated gene module that includes Klrd1, Plac8, Ctla2a and Ly6c2. This observation, together with the amplification of Th1 effectors upon treatment, confirm the findings of the original study by Snell et al.(2021).
