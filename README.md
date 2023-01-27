@@ -91,7 +91,7 @@ projected <- ProjecTME.calculate_PAS(
     species = 'human', pathway = 'kegg'
 )
 markers <- ProjecTME.find.markers(
-    projected,groups=c('CD8_Tex','CD8_Tpex'),assay='PAS,slot = 'data',
+    projected,groups=c('CD8_Tex','CD8_Tpex'),assay='PAS',slot = 'data',
     mu = 1, n_top_genes = 100
 )
 top_list <- c()
