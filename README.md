@@ -18,6 +18,8 @@ The pipeline contains the following functionalities:
 
 - Pseudotime trajectory and pathway ranking;
 
+- Analysis of drug-related commonalities between cells by classifying them into distinct Therapeutic Clusters (TCs)
+
 - Continue...
 
 ```r
